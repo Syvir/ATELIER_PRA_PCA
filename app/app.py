@@ -88,6 +88,34 @@ def count():
 
     return jsonify(count=n)
 
+
+#-----------------------------------------------------------------------------
+@app.route("/status")
+def status():
+    import os, time, glob
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM events")
+    count = cur.fetchone()[0]
+
+    backups = glob.glob("/backup/*.db")
+    if backups:
+        latest = max(backups, key=os.path.getctime)
+        age = int(time.time() - os.path.getctime(latest))
+        name = os.path.basename(latest)
+    else:
+        name = None
+        age = None
+
+    return {
+        "count": count,
+        "last_backup_file": name,
+        "backup_age_seconds": age
+    }
+#-----------------------------------------------------------------------------
+
+
 # ---------- Main ----------
 if __name__ == "__main__":
     init_db()

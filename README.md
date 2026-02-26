@@ -231,27 +231,45 @@ Faites preuve de pédagogie et soyez clair dans vos explications et procedures d
 **Exercice 1 :**  
 Quels sont les composants dont la perte entraîne une perte de données ?  
   
-*..Répondez à cet exercice ici..*
+Dans cette architecture, la perte simultanée du PVC pra-data ET du PVC pra-backup entraînerait une perte de données. Plus physiquement, comme on le voit sur le schéma d'architecture global, les deux PVC s'appuient sur le même "Disque du node". Par conséquent, la perte physique de ce disque, le crash complet de la machine hôte (le Codespace GitHub), ou la suppression accidentelle du cluster complet sans externalisation préalable entraîneront une perte de données définitive.
 
 **Exercice 2 :**  
 Expliquez nous pourquoi nous n'avons pas perdu les données lors de la supression du PVC pra-data  
   
-*..Répondez à cet exercice ici..*
+Nous n'avons pas perdu les données grâce à la mise en place d'un mécanisme de sauvegarde automatisé (PRA). Un CronJob Kubernetes est configuré pour s'exécuter toutes les minutes. Ce job exécute un script qui copie le fichier de la base de données SQLite depuis le volume de production (pra-data) vers un volume de stockage de secours (pra-backup). Lors du crash simulé, bien que la base de production ait été détruite, nous avions une copie intacte de la base de données datant de moins d'une minute sur le volume de backup, que nous avons pu restaurer via un script de restauration.
 
 **Exercice 3 :**  
 Quels sont les RTO et RPO de cette solution ?  
   
-*..Répondez à cet exercice ici..*
+RPO (Recovery Point Objective - Perte de données maximale admissible) : Il est de 1 minute. Puisque le CronJob de sauvegarde tourne toutes les minutes, dans le pire des scénarios (un crash survenant à 59 secondes), nous perdrions au maximum l'équivalent d'une minute de données écrites.
+
+RTO (Recovery Time Objective - Temps de reprise d'activité) : Il est de quelques minutes (généralement entre 2 et 5 minutes selon la réactivité de l'opérateur). Dans ce TP, la restauration n'est pas automatique. En cas de perte du pra-data, un administrateur doit intervenir manuellement pour isoler le service, recréer les manifestes Kubernetes, appliquer le Job de restauration (50-job-restore.yaml), puis relancer les CronJobs.
 
 **Exercice 4 :**  
 Pourquoi cette solution (cet atelier) ne peux pas être utilisé dans un vrai environnement de production ? Que manque-t-il ?   
   
-*..Répondez à cet exercice ici..*
+Cette solution comporte plusieurs limites critiques pour la production :
+
+Single Point of Failure (SPOF) matériel : Les données de production et les backups sont stockés sur le même disque physique local. Si le disque brûle, tout est perdu.
+
+Base de données inadaptée : SQLite est un fichier plat local. Il ne supporte pas bien l'accès concurrentiel important et empêche de "scaler" (mettre à l'échelle) l'application en lançant plusieurs Pods Flask simultanément (ils ne pourraient pas écrire sur la même base SQLite de manière synchronisée sans conflits).
+
+Absence d'externalisation (Règle du 3-2-1) : Les sauvegardes ne sont pas envoyées à l'extérieur du cluster (sur un Object Storage S3, un autre datacenter, etc.).
+
+RTO manuel : La reprise après sinistre demande trop d'interventions manuelles sujettes à l'erreur humaine en période de stress.
   
 **Exercice 5 :**  
 Proposez une archtecture plus robuste.   
   
-*..Répondez à cet exercice ici..*
+Pour rendre cette architecture "Production-Ready", voici ce qu'il faudrait modifier :
+
+Remplacer SQLite par un SGBD robuste : Utiliser une base de données relationnelle (PostgreSQL ou MySQL) configurée en cluster (Primary/Replica) ou utiliser un service managé (comme AWS RDS ou GCP Cloud SQL) extérieur aux pods applicatifs.
+
+Externaliser les backups : Modifier le CronJob pour qu'il envoie les dumps de la base de données vers un stockage externe immuable situé dans une autre zone géographique (ex: AWS S3, Minio) plutôt que sur un autre dossier du même disque.
+
+Redondance des nœuds : Déployer les Pods Flask sur plusieurs nœuds (Workers) répartis sur différentes Zones de Disponibilité (Multi-AZ) avec un Load Balancer en amont pour garantir une haute disponibilité (PCA complet).
+
+Automatisation PRA : Utiliser des outils dédiés comme Velero pour sauvegarder et restaurer automatiquement l'état complet du cluster (Ressources + Volumes).
 
 ---------------------------------------------------
 Séquence 6 : Ateliers  
@@ -263,13 +281,14 @@ Difficulté : Moyenne (~2 heures)
 * last_backup_file : nom du dernier backup présent dans /backup
 * backup_age_seconds : âge du dernier backup
 
-*..**Déposez ici une copie d'écran** de votre réussite..*
+***Ici la capture d'écran :** *
+![alt text](image.png)
 
 ---------------------------------------------------
 ### **Atelier 2 : Choisir notre point de restauration**  
 Aujourd’hui nous restaurobs “le dernier backup”. Nous souhaitons **ajouter la capacité de choisir un point de restauration**.
 
-*..Décrir ici votre procédure de restauration (votre runbook)..*  
+Cet atelier présente la mise en œuvre de stratégies de continuité et de reprise d'activité sur un cluster Kubernetes pour une application Flask utilisant SQLite. L'infrastructure s'appuie sur Packer pour la création d'images et sur Ansible pour l'orchestration du déploiement des ressources sur un cluster K3d. Le Plan de Continuité d'Activité garantit la haute disponibilité puisque Kubernetes recrée automatiquement les pods défaillants sans perte de données grâce à l'utilisation de volumes persistants. Le Plan de Reprise d'Activité permet de restaurer la base de données depuis un volume de secours alimenté chaque minute par un CronJob en cas de perte totale du volume de production. Le Recovery Point Objective est fixé à une minute par la fréquence des sauvegardes tandis que le Recovery Time Objective correspond au temps nécessaire pour exécuter manuellement la procédure de restauration. La solution actuelle est limitée par l'utilisation d'un stockage local partagé et d'une base de données SQLite peu adaptée aux environnements de production distribués. Une architecture robuste exigerait l'externalisation des sauvegardes vers un stockage objet distant et l'utilisation de bases de données managées ou clusterisées. Les travaux pratiques ont permis d'ajouter une route de monitoring affichant l'état des sauvegardes et de définir une procédure opérationnelle pour choisir un point de restauration spécifique.  
   
 ---------------------------------------------------
 Evaluation
